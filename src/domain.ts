@@ -119,3 +119,44 @@ export interface EndToEndWorkflowResponse {
   publicationDraft: PublicationDraft;
   warnings: string[];
 }
+
+export type BatchStatus = "pending" | "running" | "completed" | "partial_failed" | "failed";
+export type BatchItemStatus = "pending" | "running" | "completed" | "failed";
+
+export interface BatchCreateRequest {
+  items: EndToEndWorkflowRequest[];
+}
+
+export interface BatchRunRequest {
+  maxItems?: number;
+}
+
+export interface BatchItemRecord {
+  id: string;
+  batchId: string;
+  position: number;
+  theme: string;
+  status: BatchItemStatus;
+  request: EndToEndWorkflowRequest;
+  result?: EndToEndWorkflowResponse;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BatchRecord {
+  id: string;
+  status: BatchStatus;
+  totalCount: number;
+  completedCount: number;
+  failedCount: number;
+  pendingCount: number;
+  createdAt: string;
+  updatedAt: string;
+  items: BatchItemRecord[];
+}
+
+export interface BatchRunResponse {
+  batch: BatchRecord;
+  processedItemIds: string[];
+}
