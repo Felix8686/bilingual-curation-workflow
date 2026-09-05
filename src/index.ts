@@ -1,5 +1,6 @@
 import { buildPublicationDraft } from "./curation";
-import type { PublicationDraftInput } from "./domain";
+import type { PublicationDraftInput, SourceSearchRequest } from "./domain";
+import { searchSources } from "./sources";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -20,6 +21,16 @@ export default {
       try {
         const input = (await request.json()) as PublicationDraftInput;
         return json(buildPublicationDraft(input));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json({ ok: false, error: message }, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/sources/search") {
+      try {
+        const input = (await request.json()) as SourceSearchRequest;
+        return json(await searchSources(input));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         return json({ ok: false, error: message }, 400);
