@@ -31,10 +31,10 @@ git rev-parse HEAD
 git status --short
 ```
 
-3. 安装依赖并执行检查：
+3. 安装依赖并执行检查。当前 MVP 尚未提交 package-lock，为保持验收后的工作区纯净，本轮禁止生成 lockfile：
 
 ```powershell
-npm install
+npm install --package-lock=false
 npm run check
 ```
 
@@ -88,7 +88,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/preview -ContentTy
 
 全部满足才算 PASS：
 
-1. `npm install` 成功。
+1. `npm install --package-lock=false` 成功。
 2. `npm run typecheck` 0 错误。
 3. `npm run test` 全部通过。
 4. `/health` 返回 `ok: true`。
