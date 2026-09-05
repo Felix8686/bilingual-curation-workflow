@@ -7,3 +7,4 @@ workers_dev = true
 binding = "DB"
 database_name = "bilingual-curation-workflow"
 database_id = "00000000-0000-0000-0000-000000000000"
+preview_database_id = "local-bilingual-curation-workflow"
