@@ -2,3 +2,8 @@ name = "bilingual-curation-workflow"
 main = "src/index.ts"
 compatibility_date = "2026-09-05"
 workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bilingual-curation-workflow"
+database_id = "00000000-0000-0000-0000-000000000000"
