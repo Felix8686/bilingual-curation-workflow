@@ -65,3 +65,39 @@ export interface SourceSearchResponse {
   candidates: SourceCandidate[];
   warnings: string[];
 }
+
+export interface AiCurationRequest {
+  theme: string;
+  candidates: SourceCandidate[];
+  maxSelected?: number;
+}
+
+export interface AiDecision {
+  id: string;
+  selected: boolean;
+  themeFitScore: number;
+  contextIndependenceScore: number;
+  reason: string;
+  translationZh?: string;
+}
+
+export interface AiSelectedCandidate extends SourceCandidate {
+  translationZh: string;
+  themeFitScore: number;
+  contextIndependenceScore: number;
+  selectionReason: string;
+}
+
+export interface AiRejectedCandidate {
+  id: string;
+  workTitle: string;
+  reason: string;
+}
+
+export interface AiCurationResponse {
+  theme: string;
+  model: string;
+  selected: AiSelectedCandidate[];
+  rejected: AiRejectedCandidate[];
+  warnings: string[];
+}
