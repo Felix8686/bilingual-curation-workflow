@@ -31,6 +31,11 @@ import { runEndToEndWorkflow } from "./workflow";
 interface AppEnv extends AiEnv {
   DB?: D1DatabaseLike;
   BATCH_QUEUE?: QueueProducerLike;
+  REQUIRE_ACCESS?: string;
+}
+
+interface AppExecutionContext {
+  access?: unknown;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -65,6 +70,10 @@ function requireBatchQueue(env: AppEnv): QueueProducerLike {
   return env.BATCH_QUEUE;
 }
 
+function productionAccessRequired(env: AppEnv): boolean {
+  return env.REQUIRE_ACCESS?.trim().toLowerCase() === "true";
+}
+
 async function readJsonOrEmpty<T extends object>(request: Request): Promise<T> {
   const text = await request.text();
   if (!text.trim()) return {} as T;
@@ -72,7 +81,15 @@ async function readJsonOrEmpty<T extends object>(request: Request): Promise<T> {
 }
 
 export default {
-  async fetch(request: Request, env: AppEnv): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: AppEnv,
+    ctx?: AppExecutionContext,
+  ): Promise<Response> {
+    if (productionAccessRequired(env) && !ctx?.access) {
+      return json({ ok: false, error: "Cloudflare Access authentication is required." }, 403);
+    }
+
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {

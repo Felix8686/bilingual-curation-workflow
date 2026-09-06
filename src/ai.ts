@@ -6,7 +6,24 @@ import type {
   SourceCandidate,
 } from "./domain";
 
+interface AiMessage {
+  role: "system" | "user";
+  content: string;
+}
+
+export interface WorkersAiBindingLike {
+  run(
+    model: string,
+    input: {
+      messages: AiMessage[];
+      temperature?: number;
+      max_tokens?: number;
+    },
+  ): Promise<unknown>;
+}
+
 export interface AiEnv {
+  AI?: WorkersAiBindingLike;
   AI_BASE_URL?: string;
   AI_API_KEY?: string;
   AI_MODEL?: string;
@@ -149,20 +166,51 @@ function rightsWarning(candidate: SourceCandidate): string | undefined {
   return undefined;
 }
 
-export async function curateWithAi(
-  input: AiCurationRequest,
-  env: AiEnv,
-  fetchImpl: typeof fetch = fetch,
-): Promise<AiCurationResponse> {
-  validateInput(input);
+function messagesFor(input: AiCurationRequest): AiMessage[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You are a conservative bilingual editor. Return JSON only. Never rewrite or reproduce the supplied English originals in your response. Your job is selection, scoring, and faithful Chinese translation only.",
+    },
+    {
+      role: "user",
+      content: buildPrompt(input),
+    },
+  ];
+}
 
-  const baseUrl = env.AI_BASE_URL?.trim();
-  const apiKey = env.AI_API_KEY?.trim();
-  const model = env.AI_MODEL?.trim();
-  if (!baseUrl || !apiKey || !model) {
-    throw new Error("AI_BASE_URL, AI_API_KEY and AI_MODEL must be configured.");
+function extractAiContent(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const record = payload as Record<string, unknown>;
+
+  const choices = record.choices;
+  if (Array.isArray(choices) && choices.length > 0) {
+    const first = choices[0];
+    if (first && typeof first === "object") {
+      const message = (first as Record<string, unknown>).message;
+      if (message && typeof message === "object") {
+        const content = (message as Record<string, unknown>).content;
+        if (typeof content === "string") return content;
+      }
+    }
   }
 
+  if (typeof record.response === "string") return record.response;
+  if (record.response && typeof record.response === "object") {
+    return JSON.stringify(record.response);
+  }
+
+  return undefined;
+}
+
+async function callLegacyOpenAiCompatible(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: AiMessage[],
+  fetchImpl: typeof fetch,
+): Promise<string> {
   const response = await fetchImpl(`${normalizeBaseUrl(baseUrl)}/chat/completions`, {
     method: "POST",
     headers: {
@@ -172,17 +220,7 @@ export async function curateWithAi(
     body: JSON.stringify({
       model,
       temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a conservative bilingual editor. Return JSON only. Never rewrite or reproduce the supplied English originals in your response. Your job is selection, scoring, and faithful Chinese translation only.",
-        },
-        {
-          role: "user",
-          content: buildPrompt(input),
-        },
-      ],
+      messages,
     }),
   });
 
@@ -194,6 +232,60 @@ export async function curateWithAi(
   const payload = (await response.json()) as ChatCompletionResponse;
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("AI provider returned empty content.");
+  return content;
+}
+
+async function callWorkersAi(
+  binding: WorkersAiBindingLike,
+  model: string,
+  messages: AiMessage[],
+): Promise<string> {
+  let payload: unknown;
+  try {
+    payload = await binding.run(model, {
+      messages,
+      temperature: 0.1,
+      max_tokens: 2000,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown Workers AI error";
+    throw new Error(`Workers AI request failed: ${detail}`);
+  }
+
+  const content = extractAiContent(payload);
+  if (!content) throw new Error("Workers AI returned empty content.");
+  return content;
+}
+
+export async function curateWithAi(
+  input: AiCurationRequest,
+  env: AiEnv,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AiCurationResponse> {
+  validateInput(input);
+
+  const baseUrl = env.AI_BASE_URL?.trim();
+  const apiKey = env.AI_API_KEY?.trim();
+  const model = env.AI_MODEL?.trim();
+  if (!model) {
+    throw new Error("AI_MODEL must be configured.");
+  }
+
+  const messages = messagesFor(input);
+  let content: string;
+
+  // Local mock and future external providers intentionally take precedence when
+  // explicitly configured. Production omits these values and uses env.AI.
+  if (baseUrl || apiKey) {
+    if (!baseUrl || !apiKey) {
+      throw new Error("AI_BASE_URL and AI_API_KEY must both be configured when using an external AI provider.");
+    }
+    content = await callLegacyOpenAiCompatible(baseUrl, apiKey, model, messages, fetchImpl);
+  } else if (env.AI) {
+    content = await callWorkersAi(env.AI, model, messages);
+  } else {
+    throw new Error("Workers AI binding or AI_BASE_URL/AI_API_KEY must be configured.");
+  }
 
   const decisions = parseDecisions(content);
   const byId = new Map(input.candidates.map((candidate) => [candidate.id, candidate]));

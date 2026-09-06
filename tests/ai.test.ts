@@ -101,6 +101,56 @@ describe("curateWithAi", () => {
     expect(outbound.messages[0].content).toMatch(/Never rewrite or reproduce/i);
   });
 
+  it("uses native Workers AI binding when external provider variables are absent", async () => {
+    let requestedModel = "";
+    let requestedInput: unknown;
+
+    const result = await curateWithAi(request(), {
+      AI_MODEL: "@cf/qwen/qwen3-30b-a3b-fp8",
+      AI: {
+        run: async (model, input) => {
+          requestedModel = model;
+          requestedInput = input;
+          return {
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        id: "film-a",
+                        selected: true,
+                        themeFitScore: 97,
+                        contextIndependenceScore: 91,
+                        reason: "适合主题",
+                        translationZh: "但爱一个人，也被一个人爱，对我意义重大。",
+                        originalEn: "WORKERS AI MUST NOT REPLACE SOURCE ORIGINAL",
+                      },
+                      {
+                        id: "lit-b",
+                        selected: false,
+                        themeFitScore: 60,
+                        contextIndependenceScore: 70,
+                        reason: "本轮不选",
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    expect(requestedModel).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
+    expect(requestedInput).toMatchObject({ temperature: 0.1, max_tokens: 2000 });
+    expect(result.model).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
+    expect(result.selected).toHaveLength(1);
+    expect(result.selected[0].originalEn).toBe(candidateA.originalEn);
+    expect(result.selected[0].originalEn).not.toContain("WORKERS AI MUST NOT REPLACE");
+  });
+
   it("rejects a selected item when AI omits its Chinese translation", async () => {
     const mockFetch: typeof fetch = async () =>
       jsonResponse({
@@ -137,9 +187,10 @@ describe("curateWithAi", () => {
     );
   });
 
-  it("refuses to call AI when provider configuration is missing", async () => {
-    await expect(curateWithAi(request(), {}, fetch)).rejects.toThrow(
-      /AI_BASE_URL, AI_API_KEY and AI_MODEL must be configured/i,
-    );
+  it("refuses to call AI when model or provider configuration is missing", async () => {
+    await expect(curateWithAi(request(), {}, fetch)).rejects.toThrow(/AI_MODEL must be configured/i);
+    await expect(
+      curateWithAi(request(), { AI_MODEL: "test-model" }, fetch),
+    ).rejects.toThrow(/Workers AI binding or AI_BASE_URL\/AI_API_KEY must be configured/i);
   });
 });
