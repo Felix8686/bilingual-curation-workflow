@@ -8,3 +8,14 @@ binding = "DB"
 database_name = "bilingual-curation-workflow"
 database_id = "00000000-0000-0000-0000-000000000000"
 preview_database_id = "local-bilingual-curation-workflow"
+
+[[queues.producers]]
+binding = "BATCH_QUEUE"
+queue = "bilingual-curation-workflow-batches"
+
+[[queues.consumers]]
+queue = "bilingual-curation-workflow-batches"
+max_batch_size = 3
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 10
