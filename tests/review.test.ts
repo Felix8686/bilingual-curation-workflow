@@ -140,4 +140,13 @@ describe("review console", () => {
     expect(html).toContain("复制待发布稿");
     expect(html).toContain("已发布");
   });
+
+  it("emits syntactically valid inline JavaScript", async () => {
+    const html = await reviewConsoleResponse().text();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(script).toBeTruthy();
+    expect(() => new Function(script!)).not.toThrow();
+    expect(script).toContain("split(/\\r?\\n/)");
+    expect(script).toContain("+'\\n状态: '");
+  });
 });
