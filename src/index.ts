@@ -9,16 +9,25 @@ import { buildPublicationDraft } from "./curation";
 import type {
   AiCurationRequest,
   BatchCreateRequest,
+  BatchEnqueueRequest,
+  BatchQueueMessage,
   BatchRunRequest,
   EndToEndWorkflowRequest,
   PublicationDraftInput,
   SourceSearchRequest,
 } from "./domain";
+import {
+  consumeBatchQueue,
+  enqueueBatch,
+  type QueueMessageBatchLike,
+  type QueueProducerLike,
+} from "./queue";
 import { searchSources } from "./sources";
 import { runEndToEndWorkflow } from "./workflow";
 
 interface AppEnv extends AiEnv {
   DB?: D1DatabaseLike;
+  BATCH_QUEUE?: QueueProducerLike;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -29,7 +38,7 @@ function json(data: unknown, status = 200): Response {
 }
 
 function errorStatus(message: string): number {
-  if (/must be configured|D1 DB binding/i.test(message)) return 503;
+  if (/must be configured|D1 DB binding|Queue binding/i.test(message)) return 503;
   if (/Batch not found/i.test(message)) return 404;
   if (/no candidates|selected no candidates/i.test(message)) return 422;
   return 400;
@@ -38,6 +47,11 @@ function errorStatus(message: string): number {
 function requireBatchStore(env: AppEnv): D1BatchStore {
   if (!env.DB) throw new Error("D1 DB binding must be configured.");
   return new D1BatchStore(env.DB);
+}
+
+function requireBatchQueue(env: AppEnv): QueueProducerLike {
+  if (!env.BATCH_QUEUE) throw new Error("Queue binding must be configured.");
+  return env.BATCH_QUEUE;
 }
 
 async function readJsonOrEmpty<T extends object>(request: Request): Promise<T> {
@@ -134,6 +148,29 @@ export default {
       }
     }
 
+    const enqueueMatch = url.pathname.match(/^\/api\/batches\/([^/]+)\/enqueue$/);
+    if (request.method === "POST" && enqueueMatch) {
+      try {
+        const input = await readJsonOrEmpty<BatchEnqueueRequest>(request);
+        return json(
+          await enqueueBatch(
+            decodeURIComponent(enqueueMatch[1]),
+            input,
+            requireBatchStore(env),
+            requireBatchQueue(env),
+          ),
+          202,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json({ ok: false, error: message }, errorStatus(message));
+      }
+    }
+
     return json({ ok: false, error: "Not found" }, 404);
+  },
+
+  async queue(batch: QueueMessageBatchLike<BatchQueueMessage>, env: AppEnv): Promise<void> {
+    await consumeBatchQueue(batch, env, requireBatchStore(env));
   },
 };

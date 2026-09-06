@@ -45,8 +45,39 @@ class MemoryBatchStore implements BatchStore {
 
   async setItemRunning(batchId: string, itemId: string, updatedAt: string): Promise<void> {
     const item = this.mustItem(batchId, itemId);
-    if (item.status === "pending") item.status = "running";
+    if (item.status === "pending" && !item.queuedAt) item.status = "running";
     item.error = undefined;
+    item.updatedAt = updatedAt;
+  }
+
+  async markItemQueued(batchId: string, itemId: string, queuedAt: string): Promise<boolean> {
+    const item = this.mustItem(batchId, itemId);
+    if (item.status !== "pending" || item.queuedAt) return false;
+    item.queuedAt = queuedAt;
+    item.updatedAt = queuedAt;
+    return true;
+  }
+
+  async clearItemQueued(batchId: string, itemId: string, updatedAt: string): Promise<void> {
+    const item = this.mustItem(batchId, itemId);
+    if (item.status === "pending") item.queuedAt = undefined;
+    item.updatedAt = updatedAt;
+  }
+
+  async claimQueuedItem(batchId: string, itemId: string, updatedAt: string): Promise<boolean> {
+    const item = this.mustItem(batchId, itemId);
+    if (item.status !== "pending" || !item.queuedAt) return false;
+    item.status = "running";
+    item.error = undefined;
+    item.updatedAt = updatedAt;
+    return true;
+  }
+
+  async resetQueuedItemForRetry(batchId: string, itemId: string, error: string, updatedAt: string): Promise<void> {
+    const item = this.mustItem(batchId, itemId);
+    if (item.status === "running") item.status = "pending";
+    item.result = undefined;
+    item.error = error;
     item.updatedAt = updatedAt;
   }
 
