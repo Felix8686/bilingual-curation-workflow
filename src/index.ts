@@ -14,6 +14,7 @@ import type {
   BatchRunRequest,
   EndToEndWorkflowRequest,
   PublicationDraftInput,
+  ReviewUpdateRequest,
   SourceSearchRequest,
 } from "./domain";
 import {
@@ -22,6 +23,8 @@ import {
   type QueueMessageBatchLike,
   type QueueProducerLike,
 } from "./queue";
+import { D1ReviewStore } from "./review";
+import { reviewConsoleResponse } from "./review-console";
 import { searchSources } from "./sources";
 import { runEndToEndWorkflow } from "./workflow";
 
@@ -39,14 +42,22 @@ function json(data: unknown, status = 200): Response {
 
 function errorStatus(message: string): number {
   if (/must be configured|D1 DB binding|Queue binding/i.test(message)) return 503;
-  if (/Batch not found/i.test(message)) return 404;
+  if (/Batch not found|Review item not found/i.test(message)) return 404;
   if (/no candidates|selected no candidates/i.test(message)) return 422;
   return 400;
 }
 
-function requireBatchStore(env: AppEnv): D1BatchStore {
+function requireDb(env: AppEnv): D1DatabaseLike {
   if (!env.DB) throw new Error("D1 DB binding must be configured.");
-  return new D1BatchStore(env.DB);
+  return env.DB;
+}
+
+function requireBatchStore(env: AppEnv): D1BatchStore {
+  return new D1BatchStore(requireDb(env));
+}
+
+function requireReviewStore(env: AppEnv): D1ReviewStore {
+  return new D1ReviewStore(requireDb(env));
 }
 
 function requireBatchQueue(env: AppEnv): QueueProducerLike {
@@ -63,6 +74,10 @@ async function readJsonOrEmpty<T extends object>(request: Request): Promise<T> {
 export default {
   async fetch(request: Request, env: AppEnv): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/") {
+      return reviewConsoleResponse();
+    }
 
     if (request.method === "GET" && url.pathname === "/health") {
       return json({ ok: true, service: "bilingual-curation-workflow" });
@@ -112,6 +127,31 @@ export default {
       try {
         const input = (await request.json()) as BatchCreateRequest;
         return json(await createBatch(input, requireBatchStore(env)), 201);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json({ ok: false, error: message }, errorStatus(message));
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/review/items") {
+      try {
+        const status = url.searchParams.get("status") ?? undefined;
+        const limitRaw = url.searchParams.get("limit");
+        const limit = limitRaw === null ? undefined : Number(limitRaw);
+        return json(await requireReviewStore(env).list(status, limit));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json({ ok: false, error: message }, errorStatus(message));
+      }
+    }
+
+    const reviewMatch = url.pathname.match(/^\/api\/review\/items\/([^/]+)$/);
+    if (request.method === "PATCH" && reviewMatch) {
+      try {
+        const input = (await request.json()) as ReviewUpdateRequest;
+        return json(
+          await requireReviewStore(env).update(decodeURIComponent(reviewMatch[1]), input),
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         return json({ ok: false, error: message }, errorStatus(message));
