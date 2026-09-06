@@ -1,4 +1,4 @@
-const REVIEW_CONSOLE_HTML = `<!doctype html>
+const REVIEW_CONSOLE_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
@@ -44,7 +44,7 @@ const statusName={unreviewed:'未审核',approved:'可发布',held:'暂缓',publ
 let currentBatchId=localStorage.getItem('lastBatchId')||'';
 function sourceKinds(){const v=$('sourceKind').value;return v==='literature'?['public_domain_literature']:v==='screen'?['screen_dialogue']:['public_domain_literature','screen_dialogue']}
 async function createBatch(){
-  const themes=$('themes').value.split(/\\r?\\n/).map(v=>v.trim()).filter(Boolean);
+  const themes=$('themes').value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
   if(!themes.length)return toast('至少输入一个主题');
   if(themes.length>20)return toast('单批最多 20 个主题');
   const works=$('works').value.split(',').map(v=>v.trim()).filter(Boolean);
