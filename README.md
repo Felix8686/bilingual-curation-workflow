@@ -1,6 +1,6 @@
 # bilingual-curation-workflow
 
-面向抖音双语长文内容的策展工作流。系统负责作品源检索、候选筛选、中文翻译、待发布稿生成和批次管理；最终审核与发布始终由用户手动完成。
+面向抖音双语长文内容的策展工作流。系统负责作品源检索、候选筛选、中文翻译、待发布稿生成、批次执行和人工审核；最终发布始终由用户手动完成。
 
 ## 已验收能力
 
@@ -39,39 +39,66 @@ GET  /api/batches/:batchId
 POST /api/batches/:batchId/run
 ```
 
-## 开发中：Queue Pipeline v1
+### Queue Pipeline v1
 
-第六阶段增加 Cloudflare Queues，让已保存到 D1 的批次可以异步执行，而不需要用户反复调用 `/run`。
-
-```text
-创建批次
-→ POST /api/batches/:batchId/enqueue
-→ Queue 异步投递 batchId + itemId
-→ Consumer 用 D1 原子抢占执行权
-→ 运行完整内容工作流
-→ 成功/失败写回 D1
-```
-
-关键规则：
-
-- Queue 采用 at-least-once 投递，因此消费端必须幂等；重复消息拿不到 D1 执行权会直接跳过。
-- 投递前记录 `queuedAt`，避免同一 pending item 被重复 enqueue。
-- Queue 发布失败会回滚 `queuedAt`。
-- 前两次消费失败进入延迟重试；第三次仍失败才将 item 标记为 `failed`。
-- 第五阶段的手动 `/run` 继续保留为故障兜底，并自动避开已经入队的 item。
-- 仍然不自动发布抖音。
-
-新增接口：
+Cloudflare Queues 异步执行 D1 中的批次任务。消费端通过 D1 原子抢占抵御 at-least-once 重复投递；前两次失败进入重试，最终失败才落库。手动 `/run` 继续作为故障兜底。
 
 ```text
 POST /api/batches/:batchId/enqueue
 ```
+
+## 开发中：Review Console v1
+
+第七阶段提供一个由同一 Cloudflare Worker 直接托管的人工审核台，不再要求用户手工拼 API 请求。
+
+打开：
+
+```text
+GET /
+```
+
+审核台支持：
+
+- 一次输入最多 20 个主题，创建批次并直接 enqueue。
+- 查看最近一次批次的 Queue 执行进度。
+- 查看已经生成完成的双语待发布稿。
+- 一键复制 publication draft，供用户手动发布。
+- 人工标记 `未审核 / 可发布 / 暂缓 / 已发布`。
+- 保存最多 2000 字的人工审核备注。
+- 按审核状态筛选稿件。
+
+审核状态只修改 D1 中独立的 review 字段，不会修改已经生成的 `result_json`、英文原文、中文翻译或 publication draft。
+
+新增 API：
+
+```text
+GET   /api/review/items?status=unreviewed&limit=100
+PATCH /api/review/items/:itemId
+```
+
+PATCH 示例：
+
+```json
+{
+  "reviewStatus": "approved",
+  "note": "可发布，发布前再人工核对版权 warning"
+}
+```
+
+审核状态：
+
+```text
+unreviewed | approved | held | published
+```
+
+`published` 只是用户手动发布后做记录，系统没有任何抖音发布接口。
 
 ## 技术形态
 
 - Cloudflare Worker
 - Cloudflare D1
 - Cloudflare Queues
+- Worker 内置无框架 Review Console
 - TypeScript / Vitest
 - Project Gutenberg / Gutendex
 - English Wikiquote / MediaWiki API
@@ -88,18 +115,21 @@ npm run dev
 
 Wrangler 本地开发会通过 Miniflare 模拟 D1 和 Queues。AI 本地配置放在 `.dev.vars`，该文件已被 Git 忽略。
 
-完整接口：
+完整主要接口：
 
 ```text
-GET  /health
-POST /api/preview
-POST /api/sources/search
-POST /api/ai/curate
-POST /api/workflows/generate
-POST /api/batches
-GET  /api/batches/:batchId
-POST /api/batches/:batchId/run
-POST /api/batches/:batchId/enqueue
+GET   /
+GET   /health
+POST  /api/preview
+POST  /api/sources/search
+POST  /api/ai/curate
+POST  /api/workflows/generate
+POST  /api/batches
+GET   /api/batches/:batchId
+POST  /api/batches/:batchId/run
+POST  /api/batches/:batchId/enqueue
+GET   /api/review/items
+PATCH /api/review/items/:itemId
 ```
 
 ## 当前明确不包含
@@ -112,6 +142,6 @@ POST /api/batches/:batchId/enqueue
 
 ## 开发规则
 
-当前第六阶段分支：`feat/queue-pipeline-v1`。
+当前第七阶段分支：`feat/review-console-v1`。
 
-该分支从已验收的 Batch Pipeline v1 HEAD `cd3018f7a9db2d22fa2ab4e1d602493eb881f4da` 创建。此前堆叠 PR 保持未合并，在本阶段 Hermes 验收前不得修改 `main`。
+该分支从已验收的 Queue Pipeline v1 HEAD `ecab8b6c66ea482e8d5721847ffd847689622c0e` 创建。此前堆叠 PR 保持未合并，在本阶段 Hermes 验收前不得修改 `main`。
