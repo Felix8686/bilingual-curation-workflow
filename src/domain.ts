@@ -2,6 +2,7 @@ export type SourceKind = "public_domain_literature" | "screen_dialogue";
 
 export type RightsStatus =
   | "public_domain"
+  | "public_domain_review_required"
   | "quotation_review_required"
   | "cleared"
   | "unknown";
@@ -31,5 +32,36 @@ export interface PublicationDraft {
   hook?: string;
   publicationText: string;
   segmentCount: number;
+  warnings: string[];
+}
+
+export interface SourceCandidate {
+  id: string;
+  theme: string;
+  sourceKind: SourceKind;
+  provider: "gutendex" | "wikiquote";
+  workTitle: string;
+  creator?: string;
+  sourceUrl: string;
+  originalEn: string;
+  contextNote?: string;
+  rightsStatus: RightsStatus;
+  sourceVerified: boolean;
+  score: number;
+}
+
+export interface SourceSearchRequest {
+  theme: string;
+  query?: string;
+  literatureQueries?: string[];
+  screenWorks?: string[];
+  sourceKinds?: SourceKind[];
+  limitPerSource?: number;
+}
+
+export interface SourceSearchResponse {
+  theme: string;
+  query: string;
+  candidates: SourceCandidate[];
   warnings: string[];
 }
