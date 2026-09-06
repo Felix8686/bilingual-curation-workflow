@@ -10,9 +10,13 @@ import type {
 } from "./domain";
 import { runEndToEndWorkflow } from "./workflow";
 
+export interface D1RunResultLike {
+  meta?: { changes?: number };
+}
+
 export interface D1PreparedStatementLike {
   bind(...values: unknown[]): D1PreparedStatementLike;
-  run(): Promise<unknown>;
+  run(): Promise<D1RunResultLike>;
   first<T = Record<string, unknown>>(): Promise<T | null>;
   all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
 }
@@ -38,6 +42,7 @@ interface BatchItemRow {
   request_json: string;
   result_json: string | null;
   error_text: string | null;
+  queued_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +52,10 @@ export interface BatchStore {
   get(batchId: string): Promise<BatchRecord | null>;
   setBatchStatus(batchId: string, status: BatchStatus, updatedAt: string): Promise<void>;
   setItemRunning(batchId: string, itemId: string, updatedAt: string): Promise<void>;
+  markItemQueued(batchId: string, itemId: string, queuedAt: string): Promise<boolean>;
+  clearItemQueued(batchId: string, itemId: string, updatedAt: string): Promise<void>;
+  claimQueuedItem(batchId: string, itemId: string, updatedAt: string): Promise<boolean>;
+  resetQueuedItemForRetry(batchId: string, itemId: string, error: string, updatedAt: string): Promise<void>;
   setItemCompleted(
     batchId: string,
     itemId: string,
@@ -74,6 +83,7 @@ function toItem(row: BatchItemRow): BatchItemRecord {
     request: parseJson(row.request_json, "batch item request"),
     result: row.result_json ? parseJson(row.result_json, "batch item result") : undefined,
     error: row.error_text ?? undefined,
+    queuedAt: row.queued_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -95,6 +105,10 @@ function summarize(row: BatchRow, items: BatchItemRecord[]): BatchRecord {
     updatedAt: row.updated_at,
     items,
   };
+}
+
+function changed(result: D1RunResultLike): boolean {
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 export class D1BatchStore implements BatchStore {
@@ -138,7 +152,7 @@ export class D1BatchStore implements BatchStore {
 
     const itemRows = await this.db
       .prepare(
-        "SELECT id, batch_id, position, theme, status, request_json, result_json, error_text, created_at, updated_at FROM batch_items WHERE batch_id = ? ORDER BY position ASC",
+        "SELECT id, batch_id, position, theme, status, request_json, result_json, error_text, queued_at, created_at, updated_at FROM batch_items WHERE batch_id = ? ORDER BY position ASC",
       )
       .bind(batchId)
       .all<BatchItemRow>();
@@ -156,9 +170,47 @@ export class D1BatchStore implements BatchStore {
   async setItemRunning(batchId: string, itemId: string, updatedAt: string): Promise<void> {
     await this.db
       .prepare(
-        "UPDATE batch_items SET status = 'running', error_text = NULL, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'pending'",
+        "UPDATE batch_items SET status = 'running', error_text = NULL, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'pending' AND queued_at IS NULL",
       )
       .bind(updatedAt, batchId, itemId)
+      .run();
+  }
+
+  async markItemQueued(batchId: string, itemId: string, queuedAt: string): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        "UPDATE batch_items SET queued_at = ?, error_text = NULL, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'pending' AND queued_at IS NULL",
+      )
+      .bind(queuedAt, queuedAt, batchId, itemId)
+      .run();
+    return changed(result);
+  }
+
+  async clearItemQueued(batchId: string, itemId: string, updatedAt: string): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE batch_items SET queued_at = NULL, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'pending'",
+      )
+      .bind(updatedAt, batchId, itemId)
+      .run();
+  }
+
+  async claimQueuedItem(batchId: string, itemId: string, updatedAt: string): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        "UPDATE batch_items SET status = 'running', error_text = NULL, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'pending' AND queued_at IS NOT NULL",
+      )
+      .bind(updatedAt, batchId, itemId)
+      .run();
+    return changed(result);
+  }
+
+  async resetQueuedItemForRetry(batchId: string, itemId: string, error: string, updatedAt: string): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE batch_items SET status = 'pending', result_json = NULL, error_text = ?, updated_at = ? WHERE batch_id = ? AND id = ? AND status = 'running'",
+      )
+      .bind(error.slice(0, 2000), updatedAt, batchId, itemId)
       .run();
   }
 
@@ -249,11 +301,24 @@ export async function createBatch(
   return batch;
 }
 
-function finalStatus(batch: BatchRecord): BatchStatus {
+export function finalStatus(batch: BatchRecord): BatchStatus {
   if (batch.pendingCount > 0) return "running";
   if (batch.failedCount === 0) return "completed";
   if (batch.completedCount === 0) return "failed";
   return "partial_failed";
+}
+
+export async function refreshBatchStatus(
+  batchId: string,
+  store: BatchStore,
+  updatedAt: string,
+): Promise<BatchRecord> {
+  const before = await store.get(batchId);
+  if (!before) throw new Error("Batch not found.");
+  await store.setBatchStatus(batchId, finalStatus(before), updatedAt);
+  const after = await store.get(batchId);
+  if (!after) throw new Error("Batch disappeared after status update.");
+  return after;
 }
 
 export async function runBatch(
@@ -267,7 +332,7 @@ export async function runBatch(
   if (!initial) throw new Error("Batch not found.");
 
   const pending = initial.items
-    .filter((item) => item.status === "pending")
+    .filter((item) => item.status === "pending" && !item.queuedAt)
     .slice(0, clampRunCount(input.maxItems));
 
   if (pending.length === 0) {
@@ -291,11 +356,6 @@ export async function runBatch(
     processedItemIds.push(item.id);
   }
 
-  const afterItems = await store.get(batchId);
-  if (!afterItems) throw new Error("Batch disappeared after processing.");
-  await store.setBatchStatus(batchId, finalStatus(afterItems), now());
-  const final = await store.get(batchId);
-  if (!final) throw new Error("Batch disappeared after status update.");
-
+  const final = await refreshBatchStatus(batchId, store, now());
   return { batch: final, processedItemIds };
 }
