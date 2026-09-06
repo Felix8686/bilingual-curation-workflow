@@ -122,6 +122,7 @@ export interface EndToEndWorkflowResponse {
 
 export type BatchStatus = "pending" | "running" | "completed" | "partial_failed" | "failed";
 export type BatchItemStatus = "pending" | "running" | "completed" | "failed";
+export type ReviewStatus = "unreviewed" | "approved" | "held" | "published";
 
 export interface BatchCreateRequest {
   items: EndToEndWorkflowRequest[];
@@ -150,6 +151,9 @@ export interface BatchItemRecord {
   result?: EndToEndWorkflowResponse;
   error?: string;
   queuedAt?: string;
+  reviewStatus?: ReviewStatus;
+  reviewNote?: string;
+  reviewedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -174,4 +178,28 @@ export interface BatchRunResponse {
 export interface BatchEnqueueResponse {
   batch: BatchRecord;
   enqueuedItemIds: string[];
+}
+
+export interface ReviewItemRecord {
+  id: string;
+  batchId: string;
+  position: number;
+  theme: string;
+  status: BatchItemStatus;
+  reviewStatus: ReviewStatus;
+  reviewNote?: string;
+  reviewedAt?: string;
+  result: EndToEndWorkflowResponse;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewListResponse {
+  items: ReviewItemRecord[];
+  count: number;
+}
+
+export interface ReviewUpdateRequest {
+  reviewStatus: ReviewStatus;
+  note?: string;
 }
