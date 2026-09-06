@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "mock:ai": "node scripts/mock-ai-provider.mjs",
+    "d1:migrate:local": "wrangler d1 migrations apply bilingual-curation-workflow --local",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test",
