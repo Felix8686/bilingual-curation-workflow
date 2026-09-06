@@ -131,6 +131,15 @@ export interface BatchRunRequest {
   maxItems?: number;
 }
 
+export interface BatchEnqueueRequest {
+  maxItems?: number;
+}
+
+export interface BatchQueueMessage {
+  batchId: string;
+  itemId: string;
+}
+
 export interface BatchItemRecord {
   id: string;
   batchId: string;
@@ -140,6 +149,7 @@ export interface BatchItemRecord {
   request: EndToEndWorkflowRequest;
   result?: EndToEndWorkflowResponse;
   error?: string;
+  queuedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,4 +169,9 @@ export interface BatchRecord {
 export interface BatchRunResponse {
   batch: BatchRecord;
   processedItemIds: string[];
+}
+
+export interface BatchEnqueueResponse {
+  batch: BatchRecord;
+  enqueuedItemIds: string[];
 }
