@@ -101,3 +101,21 @@ export interface AiCurationResponse {
   rejected: AiRejectedCandidate[];
   warnings: string[];
 }
+
+export interface EndToEndWorkflowRequest extends SourceSearchRequest {
+  hook?: string;
+  maxSelected?: number;
+}
+
+export interface EndToEndWorkflowResponse {
+  theme: string;
+  query: string;
+  model: string;
+  candidateCount: number;
+  selectedCount: number;
+  rejectedCount: number;
+  selected: AiSelectedCandidate[];
+  rejected: AiRejectedCandidate[];
+  publicationDraft: PublicationDraft;
+  warnings: string[];
+}

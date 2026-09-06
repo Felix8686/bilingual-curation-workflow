@@ -2,16 +2,24 @@ import { curateWithAi, type AiEnv } from "./ai";
 import { buildPublicationDraft } from "./curation";
 import type {
   AiCurationRequest,
+  EndToEndWorkflowRequest,
   PublicationDraftInput,
   SourceSearchRequest,
 } from "./domain";
 import { searchSources } from "./sources";
+import { runEndToEndWorkflow } from "./workflow";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function errorStatus(message: string): number {
+  if (/must be configured/i.test(message)) return 503;
+  if (/no candidates|selected no candidates/i.test(message)) return 422;
+  return 400;
 }
 
 export default {
@@ -48,8 +56,17 @@ export default {
         return json(await curateWithAi(input, env));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
-        const status = /must be configured/i.test(message) ? 503 : 400;
-        return json({ ok: false, error: message }, status);
+        return json({ ok: false, error: message }, errorStatus(message));
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/workflows/generate") {
+      try {
+        const input = (await request.json()) as EndToEndWorkflowRequest;
+        return json(await runEndToEndWorkflow(input, env));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json({ ok: false, error: message }, errorStatus(message));
       }
     }
 
