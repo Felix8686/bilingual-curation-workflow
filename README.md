@@ -19,46 +19,19 @@
 
 ### Selection + Translation v1
 
-AI 只负责：
-
-1. 主题匹配与上下文独立性筛选。
-2. 忠实的简体中文翻译。
-
-AI 不负责创作、润色、现代化、缩写或改写英文原文。最终 `originalEn` 永远从抓取层对象回填。
+AI 只负责主题/上下文筛选和忠实的简体中文翻译。AI 不负责创作、润色、现代化、缩写或改写英文原文；最终 `originalEn` 永远从抓取层对象回填。
 
 ### End-to-End Workflow v1
 
 ```text
-主题
-→ 真实作品源检索
-→ AI筛选/翻译
-→ 原文安全回填
-→ 双语待发布稿
+主题 → 真实作品源检索 → AI筛选/翻译 → 原文安全回填 → 双语待发布稿
 ```
 
-接口：
+接口：`POST /api/workflows/generate`
 
-```text
-POST /api/workflows/generate
-```
+### Batch Pipeline v1
 
-搜不到素材或 AI 没有选中合格候选时，流程明确失败，不为了产量硬生成低质量稿件。
-
-## 开发中：Batch Pipeline v1
-
-第五阶段增加 Cloudflare D1 批次持久化。一次最多创建 20 个主题任务；一次运行请求最多处理 3 个 `pending` 项，避免单次 Worker 请求过重。
-
-批次状态：
-
-```text
-pending → running → completed
-                  ↘ partial_failed
-                  ↘ failed
-```
-
-每个批次项独立保存请求、状态、成功结果或失败原因。某一项失败不会删除已经成功的待发布稿。
-
-接口：
+Cloudflare D1 保存批次和每个主题任务。单批最多 20 项；手动 `run` 单次最多处理 3 项。每项独立保存成功结果或失败原因，Worker 重启后仍可恢复。
 
 ```text
 POST /api/batches
@@ -66,43 +39,40 @@ GET  /api/batches/:batchId
 POST /api/batches/:batchId/run
 ```
 
-创建批次示例：
+## 开发中：Queue Pipeline v1
 
-```json
-{
-  "items": [
-    {
-      "theme": "love",
-      "literatureQueries": ["Pride and Prejudice"],
-      "sourceKinds": ["public_domain_literature"],
-      "limitPerSource": 1,
-      "maxSelected": 1
-    },
-    {
-      "theme": "marriage",
-      "literatureQueries": ["Pride and Prejudice"],
-      "sourceKinds": ["public_domain_literature"],
-      "limitPerSource": 1,
-      "maxSelected": 1
-    }
-  ]
-}
+第六阶段增加 Cloudflare Queues，让已保存到 D1 的批次可以异步执行，而不需要用户反复调用 `/run`。
+
+```text
+创建批次
+→ POST /api/batches/:batchId/enqueue
+→ Queue 异步投递 batchId + itemId
+→ Consumer 用 D1 原子抢占执行权
+→ 运行完整内容工作流
+→ 成功/失败写回 D1
 ```
 
-运行批次：
+关键规则：
 
-```json
-{
-  "maxItems": 3
-}
+- Queue 采用 at-least-once 投递，因此消费端必须幂等；重复消息拿不到 D1 执行权会直接跳过。
+- 投递前记录 `queuedAt`，避免同一 pending item 被重复 enqueue。
+- Queue 发布失败会回滚 `queuedAt`。
+- 前两次消费失败进入延迟重试；第三次仍失败才将 item 标记为 `failed`。
+- 第五阶段的手动 `/run` 继续保留为故障兜底，并自动避开已经入队的 item。
+- 仍然不自动发布抖音。
+
+新增接口：
+
+```text
+POST /api/batches/:batchId/enqueue
 ```
 
 ## 技术形态
 
 - Cloudflare Worker
 - Cloudflare D1
-- TypeScript
-- Vitest
+- Cloudflare Queues
+- TypeScript / Vitest
 - Project Gutenberg / Gutendex
 - English Wikiquote / MediaWiki API
 - 可替换的 OpenAI-compatible AI provider
@@ -116,7 +86,7 @@ npm run d1:migrate:local
 npm run dev
 ```
 
-AI 本地配置放在 `.dev.vars`，该文件已被 Git 忽略。
+Wrangler 本地开发会通过 Miniflare 模拟 D1 和 Queues。AI 本地配置放在 `.dev.vars`，该文件已被 Git 忽略。
 
 完整接口：
 
@@ -129,6 +99,7 @@ POST /api/workflows/generate
 POST /api/batches
 GET  /api/batches/:batchId
 POST /api/batches/:batchId/run
+POST /api/batches/:batchId/enqueue
 ```
 
 ## 当前明确不包含
@@ -136,12 +107,11 @@ POST /api/batches/:batchId/run
 - AI 原创整篇正文
 - AI 改写英文原文
 - 抖音自动发布 / RPA
-- 无人值守发布
-- Cron / Queue 自动调度
-- 生产 D1 部署
+- Cron 自动调度
+- 生产 D1 / Queue 创建或部署
 
 ## 开发规则
 
-当前第五阶段分支：`feat/batch-pipeline-v1`。
+当前第六阶段分支：`feat/queue-pipeline-v1`。
 
-该分支从已验收的 End-to-End Workflow v1 HEAD `3aa3cbc66fd595c9e0e81a2b9ddf64abe7195c91` 创建。此前堆叠 PR 保持未合并，在本阶段 Hermes 验收前不得修改 `main`。
+该分支从已验收的 Batch Pipeline v1 HEAD `cd3018f7a9db2d22fa2ab4e1d602493eb881f4da` 创建。此前堆叠 PR 保持未合并，在本阶段 Hermes 验收前不得修改 `main`。
