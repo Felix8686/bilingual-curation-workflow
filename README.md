@@ -47,11 +47,9 @@ Cloudflare Queues 异步执行 D1 中的批次任务。消费端通过 D1 原子
 POST /api/batches/:batchId/enqueue
 ```
 
-## 开发中：Review Console v1
+### Review Console v1
 
-第七阶段提供一个由同一 Cloudflare Worker 直接托管的人工审核台，不再要求用户手工拼 API 请求。
-
-打开：
+同一个 Worker 提供人工审核台：
 
 ```text
 GET /
@@ -60,49 +58,66 @@ GET /
 审核台支持：
 
 - 一次输入最多 20 个主题，创建批次并直接 enqueue。
-- 查看最近一次批次的 Queue 执行进度。
-- 查看已经生成完成的双语待发布稿。
+- 查看 Queue 执行进度和已完成双语稿。
 - 一键复制 publication draft，供用户手动发布。
 - 人工标记 `未审核 / 可发布 / 暂缓 / 已发布`。
 - 保存最多 2000 字的人工审核备注。
 - 按审核状态筛选稿件。
 
-审核状态只修改 D1 中独立的 review 字段，不会修改已经生成的 `result_json`、英文原文、中文翻译或 publication draft。
-
-新增 API：
+审核状态只修改 D1 中独立的 review 字段，不会修改 `result_json`、英文原文、中文翻译或 publication draft。
 
 ```text
 GET   /api/review/items?status=unreviewed&limit=100
 PATCH /api/review/items/:itemId
 ```
 
-PATCH 示例：
+`published` 只是用户手动发布后的记录，系统没有任何抖音发布接口。
 
-```json
-{
-  "reviewStatus": "approved",
-  "note": "可发布，发布前再人工核对版权 warning"
-}
-```
+## 开发中：Production Readiness v1
 
-审核状态：
+生产版继续采用纯 Cloudflare 架构：
 
 ```text
-unreviewed | approved | held | published
+Cloudflare Access
+        ↓
+Worker + Review Console / API
+        ├─ Workers AI
+        ├─ D1
+        └─ Queues
+        ↓
+人工审核 → 手动发布抖音
 ```
 
-`published` 只是用户手动发布后做记录，系统没有任何抖音发布接口。
+生产安全规则：
+
+- `REQUIRE_ACCESS=true` 时，HTTP 请求必须具有 Cloudflare 运行时提供的 `ctx.access`，否则 Worker 自身返回 403。
+- 生产 AI 使用原生 Workers AI binding `env.AI`，不需要在 Worker Secret 中保存 Cloudflare API Token。
+- 当前生产候选模型：`@cf/qwen/qwen3-30b-a3b-fp8`。
+- 本地 mock / 未来其他模型厂商仍可使用 `AI_BASE_URL + AI_API_KEY + AI_MODEL`；显式配置外部 provider 时优先于 Workers AI binding。
+- `wrangler.production.toml` 独立于本地配置，使用专门的 `-prod` D1 / Queue 名称。
+- 生产 Preview URLs 明确关闭。
+- `wrangler.production.toml` 中 D1 ID 当前故意为占位值；创建真实远端 D1 前不允许部署。
+
+生产预检：
+
+```bash
+npm run prod:preflight
+```
+
+在真实 D1 ID 尚未填入时，该命令必须 FAIL。这是部署保险丝，不是故障。
 
 ## 技术形态
 
 - Cloudflare Worker
+- Cloudflare Access（生产）
+- Cloudflare Workers AI（生产）
 - Cloudflare D1
 - Cloudflare Queues
 - Worker 内置无框架 Review Console
 - TypeScript / Vitest
 - Project Gutenberg / Gutendex
 - English Wikiquote / MediaWiki API
-- 可替换的 OpenAI-compatible AI provider
+- OpenAI-compatible provider fallback（本地 mock / 可替换）
 
 ## 本地验证
 
@@ -138,10 +153,10 @@ PATCH /api/review/items/:itemId
 - AI 改写英文原文
 - 抖音自动发布 / RPA
 - Cron 自动调度
-- 生产 D1 / Queue 创建或部署
+- 未经 Access 保护的生产后台
 
 ## 开发规则
 
-当前第七阶段分支：`feat/review-console-v1`。
+当前生产准备分支：`chore/production-readiness-v1`。
 
-该分支从已验收的 Queue Pipeline v1 HEAD `ecab8b6c66ea482e8d5721847ffd847689622c0e` 创建。此前堆叠 PR 保持未合并，在本阶段 Hermes 验收前不得修改 `main`。
+该分支从完成合并后全链路回归的 `main` HEAD `00601a909e73acf29a7c22db1d8b90dc6be6203f` 创建。未经本阶段验收，不修改 `main`，不执行生产部署。

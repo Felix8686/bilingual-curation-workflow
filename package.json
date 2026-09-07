@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test",
+    "prod:preflight": "node scripts/production-preflight.mjs wrangler.production.toml",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

@@ -1,0 +1,28 @@
+name = "bilingual-curation-workflow"
+main = "src/index.ts"
+compatibility_date = "2026-09-05"
+workers_dev = true
+preview_urls = false
+
+[vars]
+AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8"
+REQUIRE_ACCESS = "true"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bilingual-curation-workflow-prod"
+database_id = "REPLACE_WITH_PRODUCTION_D1_ID"
+
+[[queues.producers]]
+binding = "BATCH_QUEUE"
+queue = "bilingual-curation-workflow-batches-prod"
+
+[[queues.consumers]]
+queue = "bilingual-curation-workflow-batches-prod"
+max_batch_size = 3
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 10
